@@ -1,0 +1,10 @@
+services:
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest
+    container_name: db-admin_phpmyadmin
+    environment:
+      - PMA_ARBITRARY=1
+      - UPLOAD_LIMIT=256M
+    ports:
+      - "8080:80"
+    restart: unless-stopped
