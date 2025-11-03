@@ -6,70 +6,75 @@ if [[ -z "${PROJECT}" ]]; then
   read -rp "اسم المشروع؟ " PROJECT
 fi
 
-PROJECT=$(echo "$PROJECT" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')
-WORKSPACE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJ_DIR="${WORKSPACE}/${PROJECT}"
-API_DIR="${PROJ_DIR}/api"
-VUE_DIR="${PROJ_DIR}/default"
-
-if [[ -d "${PROJ_DIR}" ]]; then
-  echo "⚠️ المجلد ${PROJ_DIR} موجود مسبقاً."
+# sanitize
+PROJECT="$(echo "$PROJECT" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')"
+if [[ -z "${PROJECT}" ]]; then
+  echo "❌ اسم مشروع غير صالح"
   exit 1
 fi
 
-mkdir -p "${API_DIR}/docker" "${VUE_DIR}" "${PROJ_DIR}/_data/mysql"
-cp "${WORKSPACE}/_templates/docker-compose.tmpl.yml" "${PROJ_DIR}/docker-compose.yml"
-cp "${WORKSPACE}/_templates/api.Dockerfile" "${API_DIR}/docker/api.Dockerfile"
-cp "${WORKSPACE}/_templates/nginx.conf" "${API_DIR}/docker/nginx.conf"
-cp "${WORKSPACE}/_templates/compose.env.example" "${PROJ_DIR}/.env"
+WORKSPACE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJ_DIR="${WORKSPACE}/${PROJECT}"
+TPL_DIR="${WORKSPACE}/_templates"
 
-HNUM=$(echo -n "${PROJECT}" | sha256sum | awk '{print $1}')
-HEX="${HNUM:0:4}"
-DEC=$(( 0x${HEX} ))
-APP_PORT=$(( 8100 + (DEC % 400) ))
-VUE_PORT=$(( 8500 + (DEC % 400) ))
-
-sed -i "s/^PROJECT=.*/PROJECT=${PROJECT}/" "${PROJ_DIR}/.env"
-sed -i "s/^APP_PORT=.*/APP_PORT=${APP_PORT}/" "${PROJ_DIR}/.env"
-sed -i "s/^VUE_PORT=.*/VUE_PORT=${VUE_PORT}/" "${PROJ_DIR}/.env"
-sed -i "s/^DB_NAME=.*/DB_NAME=${PROJECT}_db/" "${PROJ_DIR}/.env"
-sed -i "s/^DB_USER=.*/DB_USER=${PROJECT}_user/" "${PROJ_DIR}/.env"
-sed -i "s/^DB_PASSWORD=.*/DB_PASSWORD=${PROJECT}_pass/" "${PROJ_DIR}/.env"
-sed -i "s/^DB_ROOT_PASSWORD=.*/DB_ROOT_PASSWORD=${PROJECT}_root/" "${PROJ_DIR}/.env"
-
-docker run --rm -v "${API_DIR}":/app -w /app -u "$(id -u):$(id -g)" composer:2 bash -lc "
-  composer create-project laravel/laravel /tmp/laravel && cp -a /tmp/laravel/. /app/
-  composer require laravel/breeze && php artisan breeze:install api --no-interaction
-"
-
-LARAVEL_ENV="${API_DIR}/.env"
-sed -i "s/^DB_HOST=.*/DB_HOST=db/" "${LARAVEL_ENV}"
-sed -i "s/^DB_DATABASE=.*/DB_DATABASE=${PROJECT}_db/" "${LARAVEL_ENV}"
-sed -i "s/^DB_USERNAME=.*/DB_USERNAME=${PROJECT}_user/" "${LARAVEL_ENV}"
-sed -i "s/^DB_PASSWORD=.*/DB_PASSWORD=${PROJECT}_pass/" "${LARAVEL_ENV}"
-echo "FRONTEND_URL=http://localhost:${VUE_PORT}" >> "${LARAVEL_ENV}"
-
-docker run --rm -v "${VUE_DIR}":/app -w /app node:lts bash -lc '
-  npm create vite@latest . -- --template vue
-  npm install
-  npm run build
-'
-
-cd "${PROJ_DIR}"
-docker compose --env-file .env up -d --build
-
-timeout 180 bash -lc '
-  until [ "$(docker inspect -f {{.State.Health.Status}} '"${PROJECT}"'_db 2>/dev/null)" = "healthy" ]; do
-    echo "⏳ في انتظار db..." ; sleep 3
-  done
-'
-
-docker compose --env-file .env exec -T api-php php artisan migrate --force
-
-if docker ps --format '{{.Names}}' | grep -q '^db-admin_phpmyadmin$'; then
-  docker network connect "${PROJECT}_net" db-admin_phpmyadmin 2>/dev/null || true
+if [[ -d "${PROJ_DIR}" ]]; then
+  echo "⚠️ المجلد ${PROJ_DIR} موجود مسبقًا."
+  read -rp "تكملة قد تستبدل بعض الملفات. متابعة؟ [y/N] " ans
+  [[ "${ans:-}" =~ ^[yY]$ ]] || exit 1
+else
+  mkdir -p "${PROJ_DIR}"
 fi
 
-echo "✅ تم إنشاء المشروع ${PROJECT}!"
-echo "API: http://localhost:${APP_PORT}"
-echo "Vue: http://localhost:${VUE_PORT}"
+# scaffold
+mkdir -p "${PROJ_DIR}/api"
+cp -f "${TPL_DIR}/api.Dockerfile" "${PROJ_DIR}/api/api.Dockerfile"
+cp -f "${TPL_DIR}/nginx.conf" "${PROJ_DIR}/nginx.conf"
+cp -f "${TPL_DIR}/docker-compose.tmpl.yml" "${PROJ_DIR}/docker-compose.yml"
+
+# .env with dynamic defaults
+ENV_FILE="${PROJ_DIR}/.env"
+APP_PORT_DEFAULT=8081
+
+# find free port starting from 8081
+port="${APP_PORT_DEFAULT}"
+# use ss if available, else fallback to netstat
+if command -v ss >/dev/null 2>&1; then
+  check_port() { ss -ltn | awk '{print $4}' | grep -q ":${1}$"; }
+else
+  check_port() { netstat -ltn | awk '{print $4}' | grep -q ":${1}$"; }
+fi
+while check_port "${port}"; do
+  port=$((port+1))
+done
+
+cat > "${ENV_FILE}" <<EOF
+PROJECT=${PROJECT}
+APP_PORT=${port}
+DB_ROOT_PASSWORD=${PROJECT}_root
+DB_NAME=${PROJECT}_db
+DB_USER=${PROJECT}_user
+DB_PASSWORD=${PROJECT}_pass
+DB_PORT=3306
+EOF
+
+echo "✅ تم إنشاء هيكل ${PROJECT}"
+echo " - APP_PORT=${port}"
+echo " - DB container name will be: ${PROJECT}_db"
+
+# ensure dbmesh exists
+docker network create dbmesh >/dev/null 2>&1 || true
+
+# bring up
+(
+  cd "${PROJ_DIR}"
+  docker compose up -d --build
+)
+
+# connect phpMyAdmin (if running) to shared network
+if docker ps --format '{{.Names}}' | grep -q '^db-admin_phpmyadmin$'; then
+  docker network connect dbmesh db-admin_phpmyadmin 2>/dev/null || true
+fi
+
+echo "✨ جاهز!"
+echo " - API/Nginx:  http://localhost:${port}"
+echo " - phpMyAdmin: http://localhost:8080  (Server: ${PROJECT}_db  | user: root | pass: ${PROJECT}_root)"
