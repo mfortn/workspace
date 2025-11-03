@@ -9,12 +9,12 @@ services:
       - MYSQL_PASSWORD=${DB_PASSWORD}
     command: --default-authentication-plugin=mysql_native_password
     volumes:
-      - ${PROJECT}_db_data:/var/lib/mysql
+      - db_data:/var/lib/mysql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${DB_ROOT_PASSWORD}"]
       interval: 5s
       timeout: 5s
-      retries: 20
+      retries: 30
     networks:
       - default
       - dbmesh
@@ -45,8 +45,20 @@ services:
     networks:
       - default
 
+  frontend:
+    image: node:18-alpine
+    working_dir: /app
+    container_name: ${PROJECT}_frontend
+    volumes:
+      - ./default:/app
+    command: sh -lc "npm ci && npm run dev -- --host 0.0.0.0 --port ${VUE_PORT}"
+    ports:
+      - "${VUE_PORT}:${VUE_PORT}"
+    networks:
+      - default
+
 volumes:
-  ${PROJECT}_db_data:
+  db_data:
 
 networks:
   dbmesh:
