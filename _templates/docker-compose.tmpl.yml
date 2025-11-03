@@ -7,14 +7,14 @@ services:
       - MYSQL_DATABASE=${DB_NAME}
       - MYSQL_USER=${DB_USER}
       - MYSQL_PASSWORD=${DB_PASSWORD}
-    command: --default-authentication-plugin=mysql_native_password
     volumes:
       - db_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${DB_ROOT_PASSWORD}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-p${DB_ROOT_PASSWORD}"]
       interval: 5s
-      timeout: 5s
+      timeout: 10s
       retries: 30
+    restart: unless-stopped
     networks:
       - default
       - dbmesh
@@ -29,6 +29,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    restart: unless-stopped
     networks:
       - default
 
@@ -42,6 +43,7 @@ services:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - api-php
+    restart: unless-stopped
     networks:
       - default
 
@@ -49,11 +51,14 @@ services:
     image: node:18-alpine
     working_dir: /app
     container_name: ${PROJECT}_frontend
+    environment:
+      - VITE_API_URL=http://localhost:${APP_PORT}
     volumes:
       - ./default:/app
-    command: sh -lc "npm ci && npm run dev -- --host 0.0.0.0 --port ${VUE_PORT}"
+    command: sh -lc "npm install && npm run dev -- --host 0.0.0.0 --port ${VUE_PORT}"
     ports:
       - "${VUE_PORT}:${VUE_PORT}"
+    restart: unless-stopped
     networks:
       - default
 

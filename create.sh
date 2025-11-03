@@ -14,36 +14,50 @@ TPL_DIR="${WORKSPACE}/_templates"
 
 mkdir -p "${PROJ_DIR}/api" "${PROJ_DIR}/default"
 
-# Copy templates
 cp -f "${TPL_DIR}/api.Dockerfile" "${PROJ_DIR}/api/api.Dockerfile"
 cp -f "${TPL_DIR}/nginx.conf" "${PROJ_DIR}/nginx.conf"
 cp -f "${TPL_DIR}/docker-compose.tmpl.yml" "${PROJ_DIR}/docker-compose.yml"
 
-# Vue starter template
-cp -f "${TPL_DIR}/vue_template_package.json" "${PROJ_DIR}/default/package.json"
-cp -f "${TPL_DIR}/vue_template_index.html"   "${PROJ_DIR}/default/index.html"
+# Vue scaffold
+cp -f "${TPL_DIR}/vue_pkg.json"         "${PROJ_DIR}/default/package.json"
+cp -f "${TPL_DIR}/vue_index.html"       "${PROJ_DIR}/default/index.html"
+cp -f "${TPL_DIR}/vite.config.js"       "${PROJ_DIR}/default/vite.config.js"
 mkdir -p "${PROJ_DIR}/default/src"
-cp -f "${TPL_DIR}/vue_template_vite.config.js" "${PROJ_DIR}/default/vite.config.js"
-cp -f "${TPL_DIR}/vue_template_src_main.js"    "${PROJ_DIR}/default/src/main.js"
-cp -f "${TPL_DIR}/vue_template_src_App.vue"    "${PROJ_DIR}/default/src/App.vue"
+cp -f "${TPL_DIR}/vue_main.js"          "${PROJ_DIR}/default/src/main.js"
+cp -f "${TPL_DIR}/vue_App.vue"          "${PROJ_DIR}/default/src/App.vue"
 
-# Pick free ports
-pick_port() {
-  local start="$1"
-  python3 - <<PY || exit 1
-import socket
-port = int(${start})
-while True:
-    with socket.socket() as s:
-        try:
-            s.bind(("127.0.0.1", port))
-        except OSError:
-            port += 1
-            continue
-        break
-print(port)
+# Ports helpers
+collect_used_ports() {
+  grep -hE '^(APP_PORT|VUE_PORT)=' "$WORKSPACE"/*/.env 2>/dev/null     | cut -d'=' -f2     | grep -E '^[0-9]+$'     | sort -u
+}
+
+is_port_busy() {
+  python3 - "$1" <<'PY'
+import socket, sys
+p=int(sys.argv[1])
+with socket.socket() as s:
+    try:
+        s.bind(("127.0.0.1", p))
+    except OSError:
+        print("BUSY")
 PY
 }
+
+pick_port() {
+  local start="$1"
+  local p="$start"
+  local used="$(collect_used_ports | tr '\n' ' ')"
+  while true; do
+    if echo " $used " | grep -q " $p "; then
+      p=$((p+1)); continue
+    fi
+    if [[ "$(is_port_busy "$p")" == "BUSY" ]]; then
+      p=$((p+1)); continue
+    fi
+    echo "$p"; return
+  done
+}
+
 APP_PORT="$(pick_port 8081)"
 VUE_PORT="$(pick_port 5173)"
 
@@ -58,42 +72,42 @@ DB_PORT=3306
 VUE_PORT=${VUE_PORT}
 EOF
 
-echo "✅ هيكل ${PROJECT} جاهز (Laravel API + Vue)"
+echo "✅ هيكل ${PROJECT} جاهز"
 
 docker network create dbmesh >/dev/null 2>&1 || true
 
-# Bring up infra (db + php + nginx + frontend dev server)
 (
   cd "${PROJ_DIR}"
   docker compose up -d --build
 )
 
-# If phpMyAdmin is running, ensure it's on dbmesh
+# Connect phpMyAdmin to dbmesh if running
 if docker ps --format '{{.Names}}' | grep -q '^db-admin_phpmyadmin$'; then
   docker network connect dbmesh db-admin_phpmyadmin 2>/dev/null || true
 fi
 
-# Scaffold Laravel + Breeze API inside ./api using the api-php container
+# Install Laravel API + Breeze
 (
   cd "${PROJ_DIR}"
-  echo "⬇️ تثبيت Laravel في ./api ..."
-  docker compose exec -T api-php bash -lc "cd /var/www/html && ls -A | wc -l" | grep -q '^0$' || { echo "⚠️ مجلد api غير فارغ، تخطيت التثبيت"; exit 0; }
+  if docker compose exec -T api-php bash -lc "test -f /var/www/html/public/index.php"; then
+    echo "ℹ️ Laravel موجود مسبقًا"
+  else
+    echo "⬇️ تثبيت Laravel داخل ./api"
+    docker compose exec -T api-php bash -lc "cd /var/www/html && composer create-project laravel/laravel ."
 
-  docker compose exec -T api-php bash -lc "cd /var/www/html && composer create-project laravel/laravel ."
+    echo "🔧 تهيئة .env"
+    docker compose exec -T api-php bash -lc "cd /var/www/html && php -r "copy('.env.example','.env');" && php artisan key:generate"
+    docker compose exec -T api-php bash -lc "cd /var/www/html &&       php -r "        $env = file_get_contents('.env');         $env = preg_replace('/^DB_HOST=.*/m', 'DB_HOST=db', $env);         $env = preg_replace('/^DB_DATABASE=.*/m', 'DB_DATABASE=${DB_NAME}', $env);         $env = preg_replace('/^DB_USERNAME=.*/m', 'DB_USERNAME=${DB_USER}', $env);         $env = preg_replace('/^DB_PASSWORD=.*/m', 'DB_PASSWORD=${DB_PASSWORD}', $env);         $env = preg_replace('/^APP_URL=.*/m', 'APP_URL=http://localhost:${APP_PORT}', $env);         file_put_contents('.env', $env);       ""
 
-  echo "🔑 ضبط .env للاتصال بقاعدة البيانات و الروابط"
-  docker compose exec -T api-php bash -lc "cd /var/www/html && php -r "copy('.env.example','.env');" && php artisan key:generate"
+    echo "🌬️ تثبيت Breeze (API)"
+    docker compose exec -T api-php bash -lc "cd /var/www/html && composer require laravel/breeze --dev && php artisan breeze:install api"
 
-  docker compose exec -T api-php bash -lc "cd /var/www/html &&     php -r "      $env = file_get_contents('.env');       $env = preg_replace('/^DB_HOST=.*/m', 'DB_HOST=db', $env);       $env = preg_replace('/^DB_DATABASE=.*/m', 'DB_DATABASE=${DB_NAME}', $env);       $env = preg_replace('/^DB_USERNAME=.*/m', 'DB_USERNAME=${DB_USER}', $env);       $env = preg_replace('/^DB_PASSWORD=.*/m', 'DB_PASSWORD=${DB_PASSWORD}', $env);       $env = preg_replace('/^APP_URL=.*/m', 'APP_URL=http://localhost:${APP_PORT}', $env);       file_put_contents('.env', $env);     ""
-
-  echo "🌬️ تثبيت Breeze (API)"
-  docker compose exec -T api-php bash -lc "cd /var/www/html && composer require laravel/breeze --dev && php artisan breeze:install api"
-
-  echo "🗄️ تنفيذ المايجريشن"
-  docker compose exec -T api-php bash -lc "cd /var/www/html && php artisan migrate --force"
+    echo "🗄️ مهاجرات"
+    docker compose exec -T api-php bash -lc "cd /var/www/html && php artisan migrate --force || true"
+  fi
 )
 
-echo "✨ تم!"
-echo " - Laravel API: http://localhost:${APP_PORT}"
-echo " - Vue Dev:     http://localhost:${VUE_PORT}"
-echo " - phpMyAdmin:  http://localhost:8080  (Server: ${PROJECT}_db | root/${PROJECT}_root)"
+echo "✨ جاهز!"
+echo " - API/Nginx:  http://localhost:${APP_PORT}"
+echo " - Vue Dev:    http://localhost:${VUE_PORT}"
+echo " - phpMyAdmin: http://localhost:8080  (Server: ${PROJECT}_db | root/${PROJECT}_root)"

@@ -3,7 +3,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN set -eux;     apt-get update;     apt-get install -y --no-install-recommends         ca-certificates         git curl zip unzip pkg-config         libpng-dev libjpeg62-turbo-dev libfreetype6-dev         libxml2-dev libzip-dev         libwebp-dev libxpm-dev         libonig-dev     ; rm -rf /var/lib/apt/lists/*
 
-# Composer inside container
+# Composer
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /var/www/html
