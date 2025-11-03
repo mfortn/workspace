@@ -15,9 +15,10 @@
 
 ## إنشاء مشروع جديد
 ```bash
-cd Workspace
+git clone <url>
+cd workspace
 chmod +x create.sh
-./create.sh proj2
+./create.sh projX
 ```
 سيتم إنشاء:
 ```
