@@ -119,9 +119,13 @@ fi
     docker compose exec -T api-php bash -lc '
       set -e
       cd /var/www/html
+
       # لو ما فيه .env انسخه من المثال
       php -r "file_exists('\''.env'\'') || copy('\''.env.example'\'', '\''.env'\'');"
       php artisan key:generate --force
+
+      # تأكد أن الاتصال MySQL وليس SQLite
+      sed -i "s/^DB_CONNECTION=.*/DB_CONNECTION=mysql/" .env || echo "DB_CONNECTION=mysql" >> .env
 
       # حدّث القيم المطلوبة بأمان (تعديل إن وُجدت، وإلا أضِفها)
       sed -i "s/^DB_HOST=.*/DB_HOST=db/" .env || true
@@ -131,13 +135,14 @@ fi
     '"$(printf "sed -i \"s|^APP_URL=.*|APP_URL=http://localhost:%s|\" .env || true\n" "$APP_PORT")"'
 
       # في حال السطور غير موجودة أصلًا، أضفها (idempotent)
+      grep -q "^DB_CONNECTION=" .env || echo "DB_CONNECTION=mysql" >> .env
       grep -q "^DB_HOST=" .env      || echo "DB_HOST=db" >> .env
     '"$(printf "grep -q \"^DB_DATABASE=\" .env || echo \"DB_DATABASE=%s_db\" >> .env\n" "$PROJECT")"'
     '"$(printf "grep -q \"^DB_USERNAME=\" .env || echo \"DB_USERNAME=%s_user\" >> .env\n" "$PROJECT")"'
     '"$(printf "grep -q \"^DB_PASSWORD=\" .env || echo \"DB_PASSWORD=%s_pass\" >> .env\n" "$PROJECT")"'
     '"$(printf "grep -q \"^APP_URL=\" .env    || echo \"APP_URL=http://localhost:%s\" >> .env\n" "$APP_PORT")"'
     '
-
+    
     echo "🌬️ تثبيت Breeze (API)"
     docker compose exec -T api-php bash -lc "cd /var/www/html && composer require laravel/breeze --dev && php artisan breeze:install api"
 
