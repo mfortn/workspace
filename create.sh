@@ -143,6 +143,13 @@ fi
 
     echo "🗄️ مهاجرات"
     docker compose exec -T api-php bash -lc "cd /var/www/html && php artisan migrate --force || true"
+
+    docker compose exec -T api-php bash -lc '
+      set -e
+      chown -R www-data:www-data storage bootstrap/cache
+      chmod -R 775 storage bootstrap/cache
+      php artisan cache:clear && php artisan config:clear && php artisan view:clear || true
+    '
   else
     echo "ℹ️ Laravel موجود مسبقًا (تخطيت التثبيت)"
   fi
