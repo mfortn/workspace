@@ -116,19 +116,27 @@ fi
     '
 
     echo "🔧 تهيئة .env للـ DB والروابط"
-    docker compose exec -T api-php bash -lc "
-      cd /var/www/html && php -r 'copy(\".env.example\", \".env\");'
-      php artisan key:generate
-      php -r \"
-        \$env = file_get_contents('.env');
-        \$env = preg_replace('/^DB_HOST=.*/m', 'DB_HOST=db', \$env);
-        \$env = preg_replace('/^DB_DATABASE=.*/m', 'DB_DATABASE=${DB_NAME}', \$env);
-        \$env = preg_replace('/^DB_USERNAME=.*/m', 'DB_USERNAME=${DB_USER}', \$env);
-        \$env = preg_replace('/^DB_PASSWORD=.*/m', 'DB_PASSWORD=${DB_PASSWORD}', \$env);
-        \$env = preg_replace('/^APP_URL=.*/m', 'APP_URL=http://localhost:${APP_PORT}', \$env);
-        file_put_contents('.env', \$env);
-      \"
-    "
+    docker compose exec -T api-php bash -lc '
+      set -e
+      cd /var/www/html
+      # لو ما فيه .env انسخه من المثال
+      php -r "file_exists('\''.env'\'') || copy('\''.env.example'\'', '\''.env'\'');"
+      php artisan key:generate --force
+
+      # حدّث القيم المطلوبة بأمان (تعديل إن وُجدت، وإلا أضِفها)
+      sed -i "s/^DB_HOST=.*/DB_HOST=db/" .env || true
+    '"$(printf "sed -i \"s/^DB_DATABASE=.*/DB_DATABASE=%s_db/\" .env || true\n" "$PROJECT")"'
+    '"$(printf "sed -i \"s/^DB_USERNAME=.*/DB_USERNAME=%s_user/\" .env || true\n" "$PROJECT")"'
+    '"$(printf "sed -i \"s/^DB_PASSWORD=.*/DB_PASSWORD=%s_pass/\" .env || true\n" "$PROJECT")"'
+    '"$(printf "sed -i \"s|^APP_URL=.*|APP_URL=http://localhost:%s|\" .env || true\n" "$APP_PORT")"'
+
+      # في حال السطور غير موجودة أصلًا، أضفها (idempotent)
+      grep -q "^DB_HOST=" .env      || echo "DB_HOST=db" >> .env
+    '"$(printf "grep -q \"^DB_DATABASE=\" .env || echo \"DB_DATABASE=%s_db\" >> .env\n" "$PROJECT")"'
+    '"$(printf "grep -q \"^DB_USERNAME=\" .env || echo \"DB_USERNAME=%s_user\" >> .env\n" "$PROJECT")"'
+    '"$(printf "grep -q \"^DB_PASSWORD=\" .env || echo \"DB_PASSWORD=%s_pass\" >> .env\n" "$PROJECT")"'
+    '"$(printf "grep -q \"^APP_URL=\" .env    || echo \"APP_URL=http://localhost:%s\" >> .env\n" "$APP_PORT")"'
+    '
 
     echo "🌬️ تثبيت Breeze (API)"
     docker compose exec -T api-php bash -lc "cd /var/www/html && composer require laravel/breeze --dev && php artisan breeze:install api"
