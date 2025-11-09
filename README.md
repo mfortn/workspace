@@ -37,7 +37,7 @@ docker compose up -d
 ```bash
 cd ~/workspace
 chmod +x create.sh
-./create.sh proj1
+./create.sh 
 ```
 - Laravel API: http://localhost:<APP_PORT>
 - Vue Dev:     http://localhost:<VUE_PORT>
