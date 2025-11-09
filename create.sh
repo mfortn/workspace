@@ -19,7 +19,7 @@ cp -f "${TPL_DIR}/api.Dockerfile"          "${PROJ_DIR}/api/api.Dockerfile"
 cp -f "${TPL_DIR}/nginx.conf"              "${PROJ_DIR}/nginx.conf"
 cp -f "${TPL_DIR}/docker-compose.tmpl.yml" "${PROJ_DIR}/docker-compose.yml"
 
-# Vue scaffold (بسيط جاهز)
+# Vue scaffold (نسخ مبدئي للملفات إن وُجدت قوالب)
 cp -f "${TPL_DIR}/vue_pkg.json"            "${PROJ_DIR}/default/package.json"    2>/dev/null || true
 cp -f "${TPL_DIR}/vue_index.html"          "${PROJ_DIR}/default/index.html"      2>/dev/null || true
 cp -f "${TPL_DIR}/vite.config.js"          "${PROJ_DIR}/default/vite.config.js"  2>/dev/null || true
@@ -82,6 +82,31 @@ echo "✅ تم إنشاء هيكل ${PROJECT}"
 echo " - APP_PORT=${APP_PORT}"
 echo " - VUE_PORT=${VUE_PORT}"
 
+# ==== Vue: تثبيت الحزم وإعداد Pinia / Router / Tailwind (بدون تحديد إصدارات) ====
+(
+  set -e
+  cd "${PROJ_DIR}/default"
+
+  # 1) تأكد من وجود package.json
+  if [[ ! -f package.json ]]; then
+    npm init -y >/dev/null
+  fi
+
+  # 2) تثبيت التبعيات الأساسية (أحدث إصدارات)
+  npm install vue axios pinia vue-router
+
+  # 3) تثبيت أدوات التطوير (أحدث إصدارات)
+  npm install -D @vitejs/plugin-vue vite tailwindcss @tailwindcss/postcss postcss autoprefixer
+
+  # 4) سكربتات npm الأساسية
+  npm pkg set scripts.dev="vite" >/dev/null
+  npm pkg set scripts.build="vite build" >/dev/null
+  npm pkg set scripts.preview="vite preview" >/dev/null
+
+  echo "✅ Vue جاهز: vue, axios, pinia, vue-router + tailwind/postcss (+vite)"
+  echo "   للتشغيل: cd ${PROJ_DIR}/default && npm run dev -- --port ${VUE_PORT}"
+)
+
 # شبكة قواعد البيانات المشتركة
 docker network create dbmesh >/dev/null 2>&1 || true
 
@@ -120,21 +145,16 @@ fi
       set -e
       cd /var/www/html
 
-      # لو ما فيه .env انسخه من المثال
       php -r "file_exists('\''.env'\'') || copy('\''.env.example'\'', '\''.env'\'');"
       php artisan key:generate --force
 
-      # تأكد أن الاتصال MySQL وليس SQLite
       sed -i "s/^DB_CONNECTION=.*/DB_CONNECTION=mysql/" .env || echo "DB_CONNECTION=mysql" >> .env
-
-      # حدّث القيم المطلوبة بأمان (تعديل إن وُجدت، وإلا أضِفها)
       sed -i "s/^DB_HOST=.*/DB_HOST=db/" .env || true
     '"$(printf "sed -i \"s/^DB_DATABASE=.*/DB_DATABASE=%s_db/\" .env || true\n" "$PROJECT")"'
     '"$(printf "sed -i \"s/^DB_USERNAME=.*/DB_USERNAME=%s_user/\" .env || true\n" "$PROJECT")"'
     '"$(printf "sed -i \"s/^DB_PASSWORD=.*/DB_PASSWORD=%s_pass/\" .env || true\n" "$PROJECT")"'
     '"$(printf "sed -i \"s|^APP_URL=.*|APP_URL=http://localhost:%s|\" .env || true\n" "$APP_PORT")"'
 
-      # في حال السطور غير موجودة أصلًا، أضفها (idempotent)
       grep -q "^DB_CONNECTION=" .env || echo "DB_CONNECTION=mysql" >> .env
       grep -q "^DB_HOST=" .env      || echo "DB_HOST=db" >> .env
     '"$(printf "grep -q \"^DB_DATABASE=\" .env || echo \"DB_DATABASE=%s_db\" >> .env\n" "$PROJECT")"'
