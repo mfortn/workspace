@@ -17,6 +17,9 @@ sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plug
 sudo usermod -aG docker $USER
 newgrp docker
 ```
+```bash
+git clone https://github.com/mfortn/workspace.git
+```
 
 ## 2) شبكة قواعد البيانات المشتركة (مرة واحدة)
 ```bash
